@@ -1,0 +1,10 @@
+## Interface: 11200
+## Title: AICraft Bot Control
+## Notes: AICraft PlayerBot command and raid control interface
+## Author: AICraft
+## Version: 0.1.0
+## SavedVariables: AICraftBotDB
+
+AICraftBot_Localization.en.lua
+AICraftBot.xml
+AICraftBot_Control.lua
