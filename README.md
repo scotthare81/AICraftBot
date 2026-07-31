@@ -15,6 +15,10 @@ A modern graphical PlayerBot interface for the **AICraft** Vanilla World of Warc
 - Raid support
 - Fast access to PlayerBot commands
 
+## Client Patch
+
+Custom race/class support (Dwarf Druid, Dwarf Shaman, Troll Druid) requires the AICraft client patch. See [`client-patch/README.md`](client-patch/README.md) for installation and build instructions.
+
 ## Installation
 
 1. Download the latest release.
