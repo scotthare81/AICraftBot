@@ -3,6 +3,7 @@
 *~
 .DS_Store
 *.zip
+!client-patch/releases/*.zip
 *.save
 *.pre-*
 *.before-*
