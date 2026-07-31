@@ -10,35 +10,8 @@ local rowHeight = 22
 local deploymentQueue = {}
 local deploymentRunning = false
 
-local CommandSeparator = "\\\\"
-
 local function PrintMessage(text)
     DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99AICraftBot:|r " .. text)
-end
-
-local waitFrame = CreateFrame("Frame")
-local waitTasks = {}
-
-waitFrame:SetScript("OnUpdate", function()
-    local elapsed = arg1
-    local i
-
-    for i = table.getn(waitTasks), 1, -1 do
-        local task = waitTasks[i]
-        task.remaining = task.remaining - elapsed
-
-        if task.remaining <= 0 then
-            table.remove(waitTasks, i)
-            task.callback()
-        end
-    end
-end)
-
-local function Wait(seconds, callback)
-    table.insert(waitTasks, {
-        remaining = seconds,
-        callback = callback
-    })
 end
 
 local function CountSelected(selection)
@@ -157,24 +130,30 @@ local function BuildAvailableRoster()
     availableRoster = {}
 
     local playerName = UnitName("player")
+    local found = {}
 
-    if not botTable then
-        return
-    end
+    -- The inherited addon fills botTable from ".bot list".
+    if botTable then
+        for name, data in pairs(botTable) do
+            if type(name) == "string"
+                and name ~= ""
+                and name ~= playerName
+                and not found[name] then
 
-    for name, bot in pairs(botTable) do
-        if type(name) == "string"
-            and name ~= ""
-            and name ~= playerName
-            and type(bot) == "table" then
+                found[name] = true
 
-            local class = bot["class"] or "UNKNOWN"
+                local class = "UNKNOWN"
 
-            table.insert(availableRoster, {
-                name = name,
-                class = string.upper(class),
-                online = bot["online"] == true
-            })
+                if type(data) == "table" and data.class then
+                    class = data.class
+                end
+
+                table.insert(availableRoster, {
+                    name = name,
+                    class = class,
+                    active = IsGroupMember(name)
+                })
+            end
         end
     end
 
@@ -197,331 +176,80 @@ local function SendToSelected(command)
         end
     end
 
-    -- Gear whispers work on any online bot — do not require party checkboxes.
-    if count == 0 and string.sub(command, 1, 5) == "gear " and botTable then
-        for name, bot in pairs(botTable) do
-            if type(name) == "string"
-                and name ~= ""
-                and type(bot) == "table"
-                and bot["online"] then
-                SendChatMessage(command, "WHISPER", nil, name)
-                count = count + 1
-            end
-        end
-    end
-
     if count == 0 then
-        if string.sub(command, 1, 5) == "gear " then
-            PrintMessage("No online bots found. Login bots or click Refresh Bot List on Deploy tab.")
-        else
-            PrintMessage("Select at least one active bot in the list (bots must be in your party).")
-        end
+        PrintMessage("Select at least one active bot.")
         return
     end
 
     PrintMessage(command .. " -> " .. count .. " bot(s)")
 end
 
-local function CountSelectedShamans()
-    local count = 0
+local waitFrame = CreateFrame("Frame")
+local waitTasks = {}
 
-    for name, selected in pairs(selectedBots) do
-        if selected then
-            local index
+waitFrame:SetScript("OnUpdate", function()
+    local elapsed = arg1
+    local i
 
-            for index = 1, table.getn(activeRoster) do
-                local bot = activeRoster[index]
+    for i = table.getn(waitTasks), 1, -1 do
+        local task = waitTasks[i]
+        task.remaining = task.remaining - elapsed
 
-                if bot.name == name and bot.class == "SHAMAN" then
-                    count = count + 1
-                    break
-                end
-            end
+        if task.remaining <= 0 then
+            table.remove(waitTasks, i)
+            task.callback()
         end
     end
+end)
 
-    return count
-end
-
-local function SendToSelectedShamans(command)
-    local count = 0
-
-    for name, selected in pairs(selectedBots) do
-        if selected then
-            local isShaman = false
-            local index
-
-            for index = 1, table.getn(activeRoster) do
-                local bot = activeRoster[index]
-
-                if bot.name == name and bot.class == "SHAMAN" then
-                    isShaman = true
-                    break
-                end
-            end
-
-            if isShaman then
-                SendChatMessage(command, "WHISPER", nil, name)
-                count = count + 1
-            end
-        end
-    end
-
-    if count == 0 then
-        PrintMessage("Select at least one shaman bot in your party.")
-        return false
-    end
-
-    PrintMessage(command .. " -> " .. count .. " shaman(s)")
-    return true
-end
-
-local function SendStaggeredToSelectedShamans(commands, delayStep)
-    local shamans = {}
-    local name
-
-    for name, selected in pairs(selectedBots) do
-        if selected then
-            local index
-
-            for index = 1, table.getn(activeRoster) do
-                local bot = activeRoster[index]
-
-                if bot.name == name and bot.class == "SHAMAN" then
-                    table.insert(shamans, name)
-                    break
-                end
-            end
-        end
-    end
-
-    if table.getn(shamans) == 0 then
-        PrintMessage("Select at least one shaman bot in your party.")
-        return false
-    end
-
-    local commandCount = table.getn(commands)
-    local shamanIndex
-    local commandIndex
-    local delay = 0
-
-    for shamanIndex = 1, table.getn(shamans) do
-        for commandIndex = 1, commandCount do
-            local shamanName = shamans[shamanIndex]
-            local command = commands[commandIndex]
-
-            Wait(delay, function()
-                SendChatMessage(command, "WHISPER", nil, shamanName)
-            end)
-
-            delay = delay + (delayStep or 0.6)
-        end
-    end
-
-    PrintMessage("Dropping " .. commandCount .. " totem(s) for " .. table.getn(shamans) .. " shaman(s)")
-    return true
-end
-
-local totemSlots = {
-    earth = {
-        label = "Earth",
-        options = {
-            { id = "strength", label = "Strength of Earth", strategy = "totem earth strength", drop = "strength of earth totem" },
-            { id = "stoneskin", label = "Stoneskin", strategy = "totem earth stoneskin", drop = "stoneskin totem" },
-            { id = "tremor", label = "Tremor", strategy = "totem earth tremor", drop = "tremor totem" },
-            { id = "earthbind", label = "Earthbind", strategy = "totem earth earthbind", drop = "earthbind totem" },
-            { id = "stoneclaw", label = "Stoneclaw", strategy = "totem earth stoneclaw", drop = "stoneclaw totem" }
-        }
-    },
-    fire = {
-        label = "Fire",
-        options = {
-            { id = "flametongue", label = "Flametongue", strategy = "totem fire flametongue", drop = "flametongue totem" },
-            { id = "searing", label = "Searing", strategy = "totem fire searing", drop = "searing totem" },
-            { id = "resistance", label = "Frost Resistance", strategy = "totem fire resistance", drop = "frost resistance totem" },
-            { id = "magma", label = "Magma", strategy = "totem fire magma", drop = "magma totem" }
-        }
-    },
-    water = {
-        label = "Water",
-        options = {
-            { id = "mana", label = "Mana Spring", strategy = "totem water mana", drop = "mana spring totem" },
-            { id = "healing", label = "Healing Stream", strategy = "totem water healing", drop = "healing stream totem" },
-            { id = "poison", label = "Poison Cleansing", strategy = "totem water poison", drop = "poison cleansing totem" },
-            { id = "resistance", label = "Fire Resistance", strategy = "totem water resistance", drop = "fire resistance totem" }
-        }
-    },
-    air = {
-        label = "Air",
-        options = {
-            { id = "windfury", label = "Windfury", strategy = "totem air windfury", drop = "windfury totem" },
-            { id = "grace", label = "Grace of Air", strategy = "totem air grace", drop = "grace of air totem" },
-            { id = "grounding", label = "Grounding", strategy = "totem air grounding", drop = "grounding totem" },
-            { id = "resistance", label = "Nature Resistance", strategy = "totem air resistance", drop = "nature resistance totem" },
-            { id = "tranquil", label = "Tranquil Air", strategy = "totem air tranquil", drop = "tranquil air totem" },
-            { id = "windwall", label = "Windwall", strategy = "totem air windwall", drop = "windwall totem" },
-            { id = "wrath", label = "Wrath of Air", strategy = "totem air wrath", drop = "wrath of air totem" }
-        }
-    }
-}
-
-local totemSelection = {
-    earth = "strength",
-    fire = "flametongue",
-    water = "mana",
-    air = "windfury"
-}
-
-local function InitTotemPreferences()
-    if not AICraftBotDB then
-        AICraftBotDB = {}
-    end
-
-    if type(AICraftBotDB.totems) == "table" then
-        local slot
-
-        for slot, value in pairs(AICraftBotDB.totems) do
-            if totemSelection[slot] and type(value) == "string" then
-                totemSelection[slot] = value
-            end
-        end
-    else
-        AICraftBotDB.totems = {}
-    end
-end
-
-local function SaveTotemPreferences()
-    if not AICraftBotDB then
-        AICraftBotDB = {}
-    end
-
-    AICraftBotDB.totems = {
-        earth = totemSelection.earth,
-        fire = totemSelection.fire,
-        water = totemSelection.water,
-        air = totemSelection.air
-    }
-end
-
-local function FindTotemOption(slot, optionId)
-    local slotData = totemSlots[slot]
-    local index
-
-    if not slotData then
-        return nil
-    end
-
-    for index = 1, table.getn(slotData.options) do
-        local option = slotData.options[index]
-
-        if option.id == optionId then
-            return option
-        end
-    end
-
-    return nil
-end
-
-local function TotemOptionLabel(slot, optionId)
-    local option = FindTotemOption(slot, optionId)
-
-    if option then
-        return option.label
-    end
-
-    return optionId
-end
-
-local function BuildTotemLoadoutCommand()
-    local parts = {
-        "co +force totems",
-        "nc +force totems",
-        "co +totems",
-        "nc +totems"
-    }
-
-    local totemBundles = {
-        "totems enhancement pve",
-        "totems enhancement pvp",
-        "totems enhancement raid",
-        "totems elemental pve",
-        "totems elemental pvp",
-        "totems elemental raid",
-        "totems restoration pve",
-        "totems restoration pvp",
-        "totems restoration raid"
-    }
-
-    local bundleIndex
-
-    for bundleIndex = 1, table.getn(totemBundles) do
-        local bundle = totemBundles[bundleIndex]
-        table.insert(parts, "co -" .. bundle)
-        table.insert(parts, "nc -" .. bundle)
-    end
-
-    local slotOrder = { "earth", "fire", "water", "air" }
-    local slotIndex
-
-    for slotIndex = 1, 4 do
-        local slot = slotOrder[slotIndex]
-        local slotData = totemSlots[slot]
-        local chosenId = totemSelection[slot]
-        local optionIndex
-
-        for optionIndex = 1, table.getn(slotData.options) do
-            local option = slotData.options[optionIndex]
-
-            if option.id == chosenId then
-                table.insert(parts, "co +" .. option.strategy)
-                table.insert(parts, "nc +" .. option.strategy)
-            else
-                table.insert(parts, "co -" .. option.strategy)
-                table.insert(parts, "nc -" .. option.strategy)
-            end
-        end
-    end
-
-    return table.concat(parts, CommandSeparator)
-end
-
-local function ApplyTotemLoadout()
-    SaveTotemPreferences()
-    SendToSelectedShamans(BuildTotemLoadoutCommand())
+local function Wait(seconds, callback)
+    table.insert(waitTasks, {
+        remaining = seconds,
+        callback = callback
+    })
 end
 
 local function DeployBot(name, number, total)
-    local delay = (number - 1) * 1.5
+    local baseDelay = (number - 1) * 9
 
-    Wait(delay, function()
-        PrintMessage("Logging in " .. name .. " (" .. number .. "/" .. total .. ")")
+    Wait(baseDelay, function()
+        PrintMessage("Deploying " .. name .. " (" .. number .. "/" .. total .. ")")
         SendChatMessage(".bot add " .. name, "SAY")
     end)
 
-    Wait(delay + 1.0, function()
+    Wait(baseDelay + 3, function()
+        SendChatMessage("invite", "WHISPER", nil, name)
+    end)
+
+    Wait(baseDelay + 5, function()
+        SendChatMessage("summon", "WHISPER", nil, name)
+    end)
+
+    Wait(baseDelay + 7, function()
+        SendChatMessage("prepare", "WHISPER", nil, name)
+    end)
+
+    Wait(baseDelay + 8, function()
+        SendChatMessage("follow", "WHISPER", nil, name)
+
         if number == total then
             deploymentRunning = false
-            PrintMessage("Login queue complete.")
-
-            Wait(1.0, function()
-                RequestBotList()
-            end)
+            PrintMessage("Deployment queue complete.")
+            RequestBotList()
         end
     end)
 end
 
 local function DeploySelected()
     if deploymentRunning then
-        PrintMessage("A login queue is already running.")
+        PrintMessage("A deployment is already running.")
         return
     end
 
     deploymentQueue = {}
 
     for name, selected in pairs(selectedDeployBots) do
-        local bot = botTable and botTable[name]
-
-        if selected and bot and not bot["online"] then
+        if selected and not IsGroupMember(name) then
             table.insert(deploymentQueue, name)
         end
     end
@@ -536,7 +264,7 @@ local function DeploySelected()
     end
 
     deploymentRunning = true
-    PrintMessage("Logging in " .. total .. " bot(s).")
+    PrintMessage("Starting deployment of " .. total .. " bot(s).")
 
     local i
 
@@ -573,11 +301,9 @@ local function CreateActionButton(parent, text, x, y, width, command)
     return button
 end
 
-InitTotemPreferences()
-
 local frame = CreateFrame("Frame", "AICraftBotControlFrame", UIParent)
 frame:SetWidth(590)
-frame:SetHeight(580)
+frame:SetHeight(465)
 frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 frame:SetMovable(true)
 frame:EnableMouse(true)
@@ -617,19 +343,13 @@ closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
 local controlPanel = CreateFrame("Frame", nil, frame)
 controlPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -60)
 controlPanel:SetWidth(590)
-controlPanel:SetHeight(480)
+controlPanel:SetHeight(395)
 
 local deployPanel = CreateFrame("Frame", nil, frame)
 deployPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -60)
 deployPanel:SetWidth(590)
-deployPanel:SetHeight(480)
+deployPanel:SetHeight(395)
 deployPanel:Hide()
-
-local totemsPanel = CreateFrame("Frame", nil, frame)
-totemsPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -60)
-totemsPanel:SetWidth(590)
-totemsPanel:SetHeight(480)
-totemsPanel:Hide()
 
 local controlTab = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 controlTab:SetWidth(110)
@@ -643,21 +363,13 @@ deployTab:SetHeight(25)
 deployTab:SetPoint("LEFT", controlTab, "RIGHT", 4, 0)
 deployTab:SetText("Deploy")
 
-local totemsTab = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-totemsTab:SetWidth(110)
-totemsTab:SetHeight(25)
-totemsTab:SetPoint("LEFT", deployTab, "RIGHT", 4, 0)
-totemsTab:SetText("Totems")
-
 local function ShowControlTab()
     deployPanel:Hide()
-    totemsPanel:Hide()
     controlPanel:Show()
 end
 
 local function ShowDeployTab()
     controlPanel:Hide()
-    totemsPanel:Hide()
     deployPanel:Show()
     RequestBotList()
 
@@ -670,23 +382,8 @@ local function ShowDeployTab()
     end)
 end
 
-local function ShowTotemsTab()
-    controlPanel:Hide()
-    deployPanel:Hide()
-    totemsPanel:Show()
-
-    if totemsSelectedLabel then
-        totemsSelectedLabel:SetText(CountSelectedShamans() .. " shaman(s) selected")
-    end
-
-    if UpdateTotemPickerLabels then
-        UpdateTotemPickerLabels()
-    end
-end
-
 controlTab:SetScript("OnClick", ShowControlTab)
 deployTab:SetScript("OnClick", ShowDeployTab)
-totemsTab:SetScript("OnClick", ShowTotemsTab)
 
 -- CONTROL TAB
 
@@ -792,10 +489,6 @@ for i = 1, visibleRows do
             end
 
             activeSelectedLabel:SetText(CountSelected(selectedBots) .. " selected")
-
-            if totemsSelectedLabel then
-                totemsSelectedLabel:SetText(CountSelectedShamans() .. " shaman(s) selected")
-            end
         end
     end)
 
@@ -805,10 +498,6 @@ for i = 1, visibleRows do
             selectedBots[this.botName] = selected or nil
             this.check:SetChecked(selected)
             activeSelectedLabel:SetText(CountSelected(selectedBots) .. " selected")
-
-            if totemsSelectedLabel then
-                totemsSelectedLabel:SetText(CountSelectedShamans() .. " shaman(s) selected")
-            end
         end
     end)
 
@@ -901,225 +590,6 @@ CreateActionButton(controlPanel, "AoE On", 245, -328, 100, "co +aoe")
 CreateActionButton(controlPanel, "AoE Off", 350, -328, 100, "co -aoe")
 CreateActionButton(controlPanel, "Max DPS", 455, -328, 100, "max dps")
 
-local gearTitle = controlPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-gearTitle:SetPoint("TOPLEFT", controlPanel, "TOPLEFT", 245, -358)
-gearTitle:SetText("Gear Phase (all online if none selected)")
-
-CreateActionButton(controlPanel, "G0", 245, -382, 48, "gear 0")
-CreateActionButton(controlPanel, "G1", 298, -382, 48, "gear 1")
-CreateActionButton(controlPanel, "G2", 351, -382, 48, "gear 2")
-CreateActionButton(controlPanel, "G3", 404, -382, 48, "gear 3")
-CreateActionButton(controlPanel, "G4", 457, -382, 48, "gear 4")
-CreateActionButton(controlPanel, "G5", 510, -382, 48, "gear 5")
-
--- TOTEMS TAB
-
-local totemsTitle = totemsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-totemsTitle:SetPoint("TOPLEFT", totemsPanel, "TOPLEFT", 24, -12)
-totemsTitle:SetText("Shaman Totem Loadout")
-
-local totemsSelectedLabel = totemsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-totemsSelectedLabel:SetPoint("TOPLEFT", totemsPanel, "TOPLEFT", 220, -16)
-totemsSelectedLabel:SetText("0 shaman(s) selected")
-
-local totemsHelp = totemsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-totemsHelp:SetWidth(540)
-totemsHelp:SetJustifyH("LEFT")
-totemsHelp:SetPoint("TOPLEFT", totemsPanel, "TOPLEFT", 24, -36)
-totemsHelp:SetText(
-    "Click each slot and pick any totem. Your choices are saved. Apply Loadout sends them to selected shamans. " ..
-    "Bot must know the spell — failed means not trained, not the UI blocking you."
-)
-
-local totemsLoadoutSummary = totemsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-totemsLoadoutSummary:SetWidth(540)
-totemsLoadoutSummary:SetJustifyH("LEFT")
-totemsLoadoutSummary:SetPoint("TOPLEFT", totemsPanel, "TOPLEFT", 24, -54)
-
-local totemPopup = CreateFrame("Frame", "AICraftBotTotemPopup", UIParent)
-totemPopup:SetFrameStrata("DIALOG")
-totemPopup:SetWidth(180)
-totemPopup:Hide()
-totemPopup:SetBackdrop({
-    bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true,
-    tileSize = 16,
-    edgeSize = 12,
-    insets = { left = 3, right = 3, top = 3, bottom = 3 }
-})
-totemPopup:SetBackdropColor(0, 0, 0, 0.92)
-
-local totemPickerButtons = {}
-
-local function HideTotemPopup()
-    totemPopup:Hide()
-end
-
-local function ShowTotemPopup(slot, anchor)
-    local slotData = totemSlots[slot]
-    local index
-
-    if not slotData then
-        return
-    end
-
-    if not totemPopup.buttons then
-        totemPopup.buttons = {}
-    end
-
-    for index = 1, table.getn(totemPopup.buttons) do
-        totemPopup.buttons[index]:Hide()
-    end
-
-    local popupHeight = 8
-
-    for index = 1, table.getn(slotData.options) do
-        local option = slotData.options[index]
-        local button = totemPopup.buttons[index]
-
-        if not button then
-            button = CreateFrame("Button", nil, totemPopup, "UIPanelButtonTemplate")
-            button:SetWidth(160)
-            button:SetHeight(22)
-            totemPopup.buttons[index] = button
-        end
-
-        button:SetPoint("TOPLEFT", totemPopup, "TOPLEFT", 10, -4 - ((index - 1) * 24))
-        button:SetText(option.label)
-        button.slot = slot
-        button.optionId = option.id
-        button:Show()
-
-        button:SetScript("OnClick", function()
-            totemSelection[this.slot] = this.optionId
-            SaveTotemPreferences()
-            UpdateTotemPickerLabels()
-            HideTotemPopup()
-        end)
-
-        popupHeight = popupHeight + 24
-    end
-
-    totemPopup:SetHeight(popupHeight)
-    totemPopup:ClearAllPoints()
-    totemPopup:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
-    totemPopup:Show()
-end
-
-function UpdateTotemPickerLabels()
-    local slot
-
-    for slot, button in pairs(totemPickerButtons) do
-        if button.label then
-            button.label:SetText(TotemOptionLabel(slot, totemSelection[slot]))
-        end
-    end
-
-    if totemsLoadoutSummary then
-        totemsLoadoutSummary:SetText(
-            "Earth: " .. TotemOptionLabel("earth", totemSelection.earth) ..
-            "  |  Fire: " .. TotemOptionLabel("fire", totemSelection.fire) ..
-            "  |  Water: " .. TotemOptionLabel("water", totemSelection.water) ..
-            "  |  Air: " .. TotemOptionLabel("air", totemSelection.air)
-        )
-    end
-end
-
-local function CreateTotemPicker(parent, slot, y)
-    local slotData = totemSlots[slot]
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetWidth(540)
-    row:SetHeight(28)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 24, y)
-
-    local title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -6)
-    title:SetText(slotData.label)
-
-    local picker = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    picker:SetWidth(360)
-    picker:SetHeight(24)
-    picker:SetPoint("TOPLEFT", row, "TOPLEFT", 70, 0)
-
-    picker.label = picker:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    picker.label:SetPoint("LEFT", picker, "LEFT", 8, 0)
-    picker.label:SetText(TotemOptionLabel(slot, totemSelection[slot]))
-    picker:SetText("")
-
-    picker:SetScript("OnClick", function()
-        if totemPopup:IsVisible() and totemPopup.anchor == this then
-            HideTotemPopup()
-        else
-            totemPopup.anchor = this
-            ShowTotemPopup(slot, this)
-        end
-    end)
-
-    totemPickerButtons[slot] = picker
-end
-
-CreateTotemPicker(totemsPanel, "earth", -78)
-CreateTotemPicker(totemsPanel, "fire", -112)
-CreateTotemPicker(totemsPanel, "water", -146)
-CreateTotemPicker(totemsPanel, "air", -180)
-
-local applyTotemsButton = CreateFrame("Button", nil, totemsPanel, "UIPanelButtonTemplate")
-applyTotemsButton:SetWidth(180)
-applyTotemsButton:SetHeight(28)
-applyTotemsButton:SetPoint("TOPLEFT", totemsPanel, "TOPLEFT", 24, -218)
-applyTotemsButton:SetText("Apply Loadout")
-
-applyTotemsButton:SetScript("OnClick", function()
-    ApplyTotemLoadout()
-end)
-
-local dropTotemsButton = CreateFrame("Button", nil, totemsPanel, "UIPanelButtonTemplate")
-dropTotemsButton:SetWidth(180)
-dropTotemsButton:SetHeight(28)
-dropTotemsButton:SetPoint("LEFT", applyTotemsButton, "RIGHT", 12, 0)
-dropTotemsButton:SetText("Drop Now")
-
-dropTotemsButton:SetScript("OnClick", function()
-    local commands = {}
-    local slotOrder = { "earth", "fire", "water", "air" }
-    local slotIndex
-
-    for slotIndex = 1, 4 do
-        local slot = slotOrder[slotIndex]
-        local option = FindTotemOption(slot, totemSelection[slot])
-
-        if option and option.drop then
-            table.insert(commands, "force do " .. option.drop)
-        end
-    end
-
-    SendStaggeredToSelectedShamans(commands, 1.6)
-end)
-
-local totemsOnButton = CreateFrame("Button", nil, totemsPanel, "UIPanelButtonTemplate")
-totemsOnButton:SetWidth(120)
-totemsOnButton:SetHeight(24)
-totemsOnButton:SetPoint("TOPLEFT", totemsPanel, "TOPLEFT", 24, -254)
-totemsOnButton:SetText("Totems On")
-totemsOnButton:SetScript("OnClick", function()
-    SendToSelectedShamans("co +totems" .. CommandSeparator .. "nc +totems")
-end)
-
-local totemsOffButton = CreateFrame("Button", nil, totemsPanel, "UIPanelButtonTemplate")
-totemsOffButton:SetWidth(120)
-totemsOffButton:SetHeight(24)
-totemsOffButton:SetPoint("LEFT", totemsOnButton, "RIGHT", 6, 0)
-totemsOffButton:SetText("Totems Off")
-totemsOffButton:SetScript("OnClick", function()
-    SendToSelectedShamans("co -totems" .. CommandSeparator .. "nc -totems")
-end)
-
-UpdateTotemPickerLabels()
-
-totemsPanel:EnableMouse(true)
-totemsPanel:SetScript("OnMouseDown", HideTotemPopup)
-
 -- DEPLOY TAB
 
 local deployTitle = deployPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1176,10 +646,9 @@ function UpdateDeployRows()
             row.check:SetChecked(selectedDeployBots[bot.name] == true)
             row.text:SetText(bot.name)
 
-            if bot.online then
-                row.status:SetText("|cff33ff33Online|r")
+            if bot.active then
+                row.status:SetText("|cff33ff33Active|r")
                 row.check:Disable()
-                selectedDeployBots[bot.name] = nil
             else
                 row.status:SetText("|cffaaaaaaOffline|r")
                 row.check:Enable()
@@ -1256,7 +725,7 @@ selectAllDeploy:SetScript("OnClick", function()
     for index = 1, table.getn(availableRoster) do
         local bot = availableRoster[index]
 
-        if not bot.online then
+        if not bot.active then
             selectedDeployBots[bot.name] = true
         end
     end
@@ -1296,17 +765,20 @@ deployInfo:SetJustifyH("LEFT")
 deployInfo:SetJustifyV("TOP")
 deployInfo:SetPoint("TOPLEFT", deployPanel, "TOPLEFT", 305, -125)
 deployInfo:SetText(
-    "Deploy Selected currently performs one reliable step:\n\n" ..
-    "1. Log each selected offline bot into the world\n\n" ..
-    "Online status comes directly from the server bot list.\n\n" ..
-    "Invite, summon and prepare will be added after login is verified."
+    "Deploy Selected will:\n\n" ..
+    "1. Log each bot in\n" ..
+    "2. Invite it to your group\n" ..
+    "3. Summon it to you\n" ..
+    "4. Run preparation\n" ..
+    "5. Set it to follow\n\n" ..
+    "Bots are deployed one at a time."
 )
 
 local deployButton = CreateFrame("Button", nil, deployPanel, "UIPanelButtonTemplate")
 deployButton:SetWidth(218)
 deployButton:SetHeight(34)
 deployButton:SetPoint("TOPLEFT", deployPanel, "TOPLEFT", 305, -275)
-deployButton:SetText("Login Selected")
+deployButton:SetText("Deploy Selected")
 
 deployButton:SetScript("OnClick", DeploySelected)
 
@@ -1346,4 +818,4 @@ SLASH_AICRAFTCONTROL4 = "/aibots"
 
 SlashCmdList["AICRAFTCONTROL"] = ToggleControlFrame
 
-PrintMessage("Control, deployment, and totem tabs loaded. Use /aibot")
+PrintMessage("Control and deployment tabs loaded. Use /aibot")

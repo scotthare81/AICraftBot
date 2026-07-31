@@ -1,6 +1,6 @@
-# AICraftBot UI (WoW client addon)
+# Mangosbot UI (WoW client addon)
 ## Installation
-Checkout all files to your Interface/Addons/AICraftBot folder (AICraftBot needs to be created first).
+Checkout all files to your Interface/Addons/Mangosbot folder (Mangosbot needs to be created first).
 
 ## Bot Roster
 Run `/bot` command in WoW to bring Bot Roster window. Click `Login` buttons on appropriate bot window to bring this bot online.
