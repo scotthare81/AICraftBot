@@ -3,3 +3,8 @@
 *~
 .DS_Store
 *.zip
+*.save
+*.pre-*
+*.before-*
+src/lua53.exe
+src/lua53.dll

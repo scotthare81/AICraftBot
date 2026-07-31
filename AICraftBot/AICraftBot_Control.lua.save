@@ -1,4 +1,0 @@
-cd ~/wowclient/Interface/AddOns/AICraftBot
-
-ls -l AICraftBot_Control.lua
-git status --short
